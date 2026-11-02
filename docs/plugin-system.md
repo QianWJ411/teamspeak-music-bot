@@ -55,12 +55,31 @@ export const jmPlugin: BotPlugin = {
 Register it in `src/plugins/builtin.ts`:
 
 ```ts
-import { jmPlugin } from "./jm/index.js";
+import { createJmPlugin } from "./jm/index.js";
 
 export function createBuiltinPlugins() {
-  return [jmPlugin];
+  return [createJmPlugin()];
 }
 ```
+
+## JM comic plugin
+
+The built-in `jm-comic` plugin adds:
+
+```text
+!jm <album-id|url> [chapter-range] [--force|--send]
+```
+
+It stores its state under `data/plugins/`:
+
+- `config.json` — proxy, API domains, download/upload directories, JPEG quality
+- `downloaded.json` — album ids already downloaded
+- `downloads/JM<id>/<id>.pdf` — generated PDF
+
+Set `comic.uploadDir` to a TeamSpeak server `files/.../{channelDir}` path to
+copy the PDF directly; leave it empty to upload through the TeamSpeak client.
+`--send` re-sends an existing PDF, `--force` downloads it again.
+
 
 ## Guarantees
 

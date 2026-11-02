@@ -1,12 +1,12 @@
 import type { BotPlugin } from "./types.js";
+import { createJmPlugin } from "./jm/index.js";
 
 /**
  * Built-in plugins compiled into the bot.
  *
- * The JM comic downloader will be registered here once it is ported. Keeping
- * this list explicit (rather than scanning the filesystem) makes the server
- * build deterministic and avoids arbitrary code loading.
+ * The list stays explicit (rather than scanning the filesystem) so the server
+ * build is deterministic and a deployment cannot execute arbitrary local code.
  */
 export function createBuiltinPlugins(): BotPlugin[] {
-  return [];
+  return [createJmPlugin()];
 }

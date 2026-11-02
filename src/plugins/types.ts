@@ -16,6 +16,8 @@ export interface PluginCommandContext {
   dataDir: string;
   /** Send text to the bot's current TeamSpeak channel. */
   sendText(text: string): Promise<void>;
+  /** Upload a local file into the bot's current channel. */
+  uploadFile(localPath: string, remotePath: string): Promise<void>;
   /** Current channel id (0n before the client is connected). */
   getChannelId(): bigint;
 }
@@ -27,6 +29,7 @@ export interface PluginLifecycleContext {
   config: BotConfig;
   dataDir: string;
   sendText(text: string): Promise<void>;
+  uploadFile(localPath: string, remotePath: string): Promise<void>;
   getChannelId(): bigint;
 }
 

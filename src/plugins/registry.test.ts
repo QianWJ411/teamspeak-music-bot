@@ -23,6 +23,7 @@ function context(): PluginLifecycleContext {
     config: {} as BotConfig,
     dataDir: "data/plugins",
     sendText: vi.fn(async () => {}),
+    uploadFile: vi.fn(async () => {}),
     getChannelId: () => 0n,
   };
 }

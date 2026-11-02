@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
 import {
   TS3Client,
   type TS3ClientOptions,
@@ -895,6 +896,22 @@ export class BotInstance extends EventEmitter {
       config: this.config,
       dataDir: this.pluginDataDir,
       sendText: (text) => this.tsClient.sendTextMessage(text),
+      uploadFile: async (localPath, remotePath) => {
+        const size = BigInt(fs.statSync(localPath).size);
+        const channelId = this.tsClient.getChannelId();
+        const info = await this.tsClient.fileTransferInitUpload(
+          channelId,
+          remotePath,
+          "",
+          size,
+          true,
+        );
+        await this.tsClient.uploadFileData(
+          this.tsClient.getHost(),
+          info,
+          fs.createReadStream(localPath),
+        );
+      },
       getChannelId: () => this.tsClient.getChannelId(),
     };
   }
