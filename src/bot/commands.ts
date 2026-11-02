@@ -14,6 +14,18 @@ export const ADMIN_COMMANDS = new Set([
   "stop", "clear", "remove", "move", "vol", "mode",
 ]);
 
+/**
+ * Every command name the core switch handles, including aliases. Plugins may
+ * not register these names; otherwise `executeCommand` would silently shadow a
+ * built-in command.
+ */
+export const BUILTIN_COMMANDS: ReadonlySet<string> = new Set([
+  "search", "find", "play", "add", "playnext", "pn", "pause", "resume",
+  "stop", "next", "skip", "prev", "vol", "now", "queue", "list", "clear",
+  "remove", "mode", "playlist", "album", "fm", "artist", "vote", "lyrics",
+  "move", "follow", "save", "load", "queues", "help",
+]);
+
 export function parseCommand(
   message: string,
   prefix: string,

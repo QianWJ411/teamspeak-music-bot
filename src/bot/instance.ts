@@ -12,8 +12,17 @@ import type { MusicProvider, Platform, Song } from "../music/provider.js";
 import {
   parseCommand,
   canRunCommand,
+  isAdminCommand,
+  BUILTIN_COMMANDS,
   type ParsedCommand,
 } from "./commands.js";
+import { PluginRegistry } from "../plugins/registry.js";
+import { createBuiltinPlugins } from "../plugins/builtin.js";
+import type {
+  BotPlugin,
+  PluginCommandContext,
+  PluginLifecycleContext,
+} from "../plugins/types.js";
 import {
   parseSongRef,
   parseSelectionIndex,
@@ -137,6 +146,10 @@ export interface BotInstanceOptions {
     callbackPort: number;
     oauth?: SpotifyOAuth;
   }) => SpotifyController;
+  /** Optional plugin set for tests/embedding; built-ins are used by default. */
+  plugins?: BotPlugin[];
+  /** Directory plugins may use for state (defaults to data/plugins). */
+  pluginDataDir?: string;
 }
 
 export interface BotStatus {
@@ -211,6 +224,10 @@ export class BotInstance extends EventEmitter {
   private jellyfinReporter: JellyfinPlaybackReporter | null = null;
   /** Debounce handle for the live-queue snapshot writer (Feature 2, #119). */
   private snapshotTimer: ReturnType<typeof setTimeout> | null = null;
+  private plugins: PluginRegistry;
+  private readonly pluginDataDir: string;
+  /** Serializes plugin init/teardown across quick reconnect cycles. */
+  private pluginLifecycle: Promise<void> = Promise.resolve();
 
   constructor(options: BotInstanceOptions) {
     super();
@@ -228,6 +245,12 @@ export class BotInstance extends EventEmitter {
     this.config = options.config;
     this.logger = options.logger.child({ botId: this.id });
     this.avatarStore = options.avatarStore;
+    this.plugins = new PluginRegistry(
+      options.plugins ?? createBuiltinPlugins(),
+      BUILTIN_COMMANDS,
+    );
+    this.pluginDataDir =
+      options.pluginDataDir ?? path.join(process.cwd(), "data", "plugins");
 
     this.tsClient = new TS3Client(options.tsOptions, this.logger);
     this.player = new AudioPlayer(this.logger);
@@ -630,6 +653,8 @@ export class BotInstance extends EventEmitter {
       throw new Error("Connect aborted by concurrent disconnect");
     }
     this.connected = true;
+    await this.pluginLifecycle;
+    await this.plugins.initAll(this.pluginLifecycleContext());
     // Register only after the outer lifecycle race guard succeeds. The TS
     // wrapper emits its own "connected" event before connect() resolves, so
     // registering in that callback could let a cancelled, late handshake
@@ -663,6 +688,11 @@ export class BotInstance extends EventEmitter {
     this.queue.clear();
     this.sweepLocalAudio("disconnected");
     this.connected = false;
+    this.pluginLifecycle = this.pluginLifecycle
+      .then(() => this.plugins.disposeAll(this.pluginLifecycleContext()))
+      .catch((err) => {
+        this.logger.error({ err }, "Plugin teardown failed");
+      });
     if (!this.disconnectEmitted) {
       this.disconnectEmitted = true;
       this.emit("disconnected");
@@ -790,7 +820,7 @@ export class BotInstance extends EventEmitter {
     const parsed = parseCommand(
       msg.message,
       this.config.commandPrefix,
-      this.config.commandAliases
+      { ...this.plugins.aliasMap(), ...this.config.commandAliases }
     );
     if (!parsed) return;
 
@@ -844,14 +874,46 @@ export class BotInstance extends EventEmitter {
    */
   private async isCommandAllowed(commandName: string, msg: TS3TextMessage): Promise<boolean> {
     const adminGroups = this.config.adminGroups;
-    // Public command, or enforcement off → allow without any lookup.
-    // (canRunCommand with empty groups is true iff the command is public OR
-    // adminGroups is empty.)
-    if (canRunCommand(commandName, [], adminGroups)) return true;
-    // Enforced admin command: authoritative decision uses freshly-resolved,
-    // server-wide groups. Fail closed if they can't be determined.
+    const adminOnly =
+      isAdminCommand(commandName) || this.plugins.isAdminCommand(commandName);
+    if (!adminOnly) return true;
+    if (adminGroups.length === 0) return true;
     const groups = await this.lookupInvokerGroups(msg.invokerId);
+    // canRunCommand() only knows the core ADMIN_COMMANDS set; plugin commands
+    // need the same group check applied explicitly.
+    if (this.plugins.isAdminCommand(commandName)) {
+      const admin = new Set(adminGroups.map((group) => String(group)));
+      return groups.some((group) => admin.has(String(group)));
+    }
     return canRunCommand(commandName, groups, adminGroups);
+  }
+
+  private pluginLifecycleContext(): PluginLifecycleContext {
+    return {
+      botId: this.id,
+      logger: this.logger,
+      config: this.config,
+      dataDir: this.pluginDataDir,
+      sendText: (text) => this.tsClient.sendTextMessage(text),
+      getChannelId: () => this.tsClient.getChannelId(),
+    };
+  }
+
+  private pluginCommandContext(
+    pluginId: string,
+    cmd: ParsedCommand,
+    msg: TS3TextMessage | undefined,
+    requesterName: string | undefined,
+  ): PluginCommandContext {
+    return {
+      ...this.pluginLifecycleContext(),
+      pluginId,
+      args: cmd.args,
+      rawArgs: cmd.rawArgs,
+      flags: cmd.flags,
+      message: msg,
+      requesterName,
+    };
   }
 
   /**
@@ -893,6 +955,17 @@ export class BotInstance extends EventEmitter {
     ]);
     if (!this.connected && AUDIO_COMMANDS.has(cmd.name)) {
       throw new Error("Bot is not connected to TeamSpeak");
+    }
+    const plugin = this.plugins.getCommand(cmd.name);
+    if (plugin) {
+      return plugin.command.execute(
+        this.pluginCommandContext(
+          plugin.plugin.id,
+          cmd,
+          msg,
+          requesterName,
+        ),
+      );
     }
     switch (cmd.name) {
       case "search":
@@ -2088,6 +2161,7 @@ export class BotInstance extends EventEmitter {
       `${p}vote         — Vote to skip`,
       `${p}lyrics       — Show lyrics`,
       `${p}now          — Current song info`,
+      ...this.plugins.helpLines(p),
       `${p}help         — This help message`,
     ].join("\n");
   }
